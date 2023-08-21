@@ -1,42 +1,57 @@
-import cv2
+from flask import Flask, Response, render_template
 import socket
-import struct
 import pickle
+import struct
+import logging
 
-# Set up socket
-host = '0.0.0.0'   # Listen on all available interfaces
-port = 12345       # Same port number as in the sender script
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.bind((host, port))
-s.listen(1)
+app = Flask(__name__)
 
-conn, addr = s.accept()
 
-while True:
-    # Receive frame size
-    size_data = conn.recv(4)
-    if not size_data:
-        break
-    size = struct.unpack(">L", size_data)[0]
+def receive_frames():
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind(("0.0.0.0", 8080))  # Use the same port number as in Computer A
+    server_socket.listen(5)
 
-    # Receive frame data
-    frame_data = b""
-    while len(frame_data) < size:
-        data = conn.recv(size - len(frame_data))
-        if not data:
-            break
-        frame_data += data
+    client_socket, addr = server_socket.accept()
 
-    # Deserialize frame using pickle
-    frame = pickle.loads(frame_data)
+    data = b""
+    payload_size = struct.calcsize("Q")
+    while True:
+        while len(data) < payload_size:
+            packet = client_socket.recv(4 * 1024)  # 4K buffer size
+            if not packet:
+                break
+            data += packet
+        packed_msg_size = data[:payload_size]
+        data = data[payload_size:]
+        msg_size = struct.unpack("Q", packed_msg_size)[0]
 
-    # Display frame
-    cv2.imshow('Received Video', frame)
+        while len(data) < msg_size:
+            data += client_socket.recv(4 * 1024)
 
-    # Press 'q' to exit
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+        frame_data = data[:msg_size]
+        data = data[msg_size:]
 
-cv2.destroyAllWindows()
-conn.close()
-s.close()
+        frame = pickle.loads(frame_data)
+        yield frame
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+logging.basicConfig(level=logging.DEBUG)  # Set logging level to DEBUG
+
+
+@app.route("/video_feed")
+def video_feed():
+    logging.debug("Entering video_feed route")  # Debug log message
+    return Response(receive_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+if __name__ == "__main__":
+    host = "127.0.0.1"  # Use localhost for local testing
+    port = 8080  # Use a port that is available for local testing
+
+    app.run(host=host, port=port)

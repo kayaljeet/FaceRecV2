@@ -1,27 +1,31 @@
 import cv2
 import socket
-import struct
 import pickle
+import struct
 
-# Set up socket
-host = '127.0.0.1'  # IP of the receiving server
-port = 12345       # Same port number as in the receiving script
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.connect((host, port))
+class Camera:
+    host = "127.0.0.1"  # Use localhost for local testing
+    port = 8080  # Use the same port number as in the Flask app
 
-cap = cv2.VideoCapture(0)
+    def __init__(self, host, port):
+        self.camera = cv2.VideoCapture(0)
+        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.client_socket.connect((host, port))
 
-while True:
-    ret, frame = cap.read()
+    def send_frame(self):
+        while True:
+            success, frame = self.camera.read()
+            if not success:
+                break
+            data = pickle.dumps(frame)
+            message_size = struct.pack("Q", len(data))
+            self.client_socket.sendall(message_size + data)
 
-    # Serialize the frame using pickle
-    frame_data = pickle.dumps(frame)
+    def release(self):
+        self.client_socket.close()
+        self.camera.release()
 
-    # Send the size of the serialized frame data
-    s.send(struct.pack(">L", len(frame_data)))
-
-    # Send the serialized frame data
-    s.send(frame_data)
-
-cap.release()
-s.close()
+if __name__ == "__main__":
+    camera = Camera(Camera.host, Camera.port)
+    camera.send_frame()
+    camera.release()
